@@ -1,0 +1,96 @@
+buildscript {
+    repositories {
+       mavenCentral()
+       //For testing and to be removed...
+       maven {
+         url uri('/tmp/myRepo/')
+       }
+    }
+    dependencies {
+        classpath 'org.webpieces:gradle-plugin-htmlcompiler:1.9.92'
+    }
+}
+
+apply plugin: 'application'
+apply plugin: 'idea'
+apply plugin: 'org.webpieces.templatecompiler'
+
+//Intellij Idea has a weird quirk we need to avoid
+if (System.getProperty('idea.active')) {
+    // to add src/main/java/**/*.html files for the IntelliJ resource builder
+    sourceSets {
+        main {
+            resources {
+                srcDirs += ["src/main/java"]
+                excludes = ["logback.xml"]
+            }
+        }
+    }
+
+    // to have classes and resources in the same output directory
+    idea {
+        module {
+            outputDir file("out/production/classes")
+        }
+    }
+}
+
+//ok, this is the deal here.  JPA/hibernate made the decision to look for a persistence.xml file
+//and scan for classes with @Entity in the directory OR jar with that xml file only
+//maven(and I hate this) a long time ago separated src/main/java and src/main/resources but
+//this screws tools in many situations like this one so this puts it back so the output is at
+//least put to the same location
+sourceSets.main.output.resourcesDir = sourceSets.main.output.classesDir
+compileJava.doLast { tasks.processResources.execute() }
+
+dependencies {
+  //add maven dependencies here
+  compile deps['web-webserver']
+  //optional plugin for if you use hibernate
+  compile deps['plugin-hibernate']
+  //optional plugin for if you have a json api
+  compile deps['plugin-jackson']
+  compile deps['commons-lang'] //used in json escaping
+  
+  //REMOVE once you are on a real database
+  compile deps['h2db']
+  
+  //IF you add dependencies on other projects locally, you need to modify SalesServerDevServer.java to include those
+  //SOURCE paths(ie. *.java file paths not *.class files)) or it will not recompile that code as it changes
+
+  //optional plugin for H2 for testing to swap to in-memory database making things easy/fast to clear the db
+  testCompile deps['plugin-h2']
+
+  //A library that does everything mockito does but in just one class(so therefore, way easier to debug)
+  testCompile deps['core-mock']
+  testCompile deps['core-ddl']
+
+  //For testing, we need to bring in web-webserver-test such that we can debug in the IDE as this just ensures
+  //we use the htmlcompiler on-demand rather than waiting for the gradle plugin to invoke the same code. For 
+  //production jars, the html files are compiled to *.class files
+  testCompile deps['web-webserver-test']
+  testCompile deps['selenium']
+}
+
+mainClassName = "com.sales.mysvr.Server"
+applicationDefaultJvmArgs = ["-Dlogback.configurationFile=config/logback.xml"]
+
+//Here, we must modify the start scripts to set cd to user.dir correctly as setting user.dir does NOT work
+//as new File("relative") ignores user.dir and uses something else.  We do this such that user.dir IS
+//the app directory AND new File("relative") will work as well (found issue on mac running from different
+//directories)
+CreateStartScripts startScripts = project.startScripts
+startScripts.with {
+    doLast {
+        unixScript.text = unixScript.text.replace('DEFAULT_JVM_OPTS=', 
+                              'cd $APP_HOME\necho running from $APP_HOME\nDEFAULT_JVM_OPTS=')
+        windowsScript.text = windowsScript.text.replace('set DEFAULT_JVM_OPTS=', 
+                              'cd %APP_HOME%\r\necho running from %APP_HOME%\r\nset DEFAULT_JVM_OPTS=')
+    }
+}
+
+compileTemplateSetting {
+  //Since the groovy plugin has no way of knowing about your custom tags, list them here or the compile will
+  //fail (This catches mispellings and such so you don't release a broken app to production)
+  customTags = [ "mytag", "anothertag", "id" ]
+}
